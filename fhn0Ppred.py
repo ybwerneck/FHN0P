@@ -46,90 +46,135 @@ from modulus.utils.io import dict_to_csv, csv_to_dict
 from modulus.domain.inferencer.pointwise import PointwiseInferencer as PointwiseInferencer
 from modulus.loss.loss import CausalLossNorm
 
+  
+import os
+import time
+import numpy as np
+import torch
+from torch.utils.tensorboard import SummaryWriter
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import _LRScheduler
+from torch.cuda.amp import GradScaler
+import torch.nn as nn
+import torch.cuda.profiler as profiler
+import torch.distributed as dist
+from termcolor import colored, cprint
+from copy import copy
+from operator import add
+from omegaconf import DictConfig, OmegaConf
+import hydra
+import itertools
+from collections import Counter
+from typing import Dict, List, Optional
+import logging
+from contextlib import ExitStack
+from typing import List, Union, Tuple, Callable
+
+
+from modulus.domain.constraint import Constraint
+from modulus.domain import Domain
+from modulus.loss.aggregator import Sum
+from modulus.utils.training.stop_criterion import StopCriterion
+from modulus.constants import TF_SUMMARY, JIT_PYTORCH_VERSION
+from modulus.hydra import (
+    instantiate_optim,
+    instantiate_sched,
+    instantiate_agg,
+    add_hydra_run_path,
+)
+from modulus.distributed.manager import DistributedManager
     
+class SSolver(SequentialSolver):
+    def __init__(  self,
+        cfg: DictConfig,
+        domains: List[Tuple[int, Domain]],
+        custom_update_operation: Union[Callable, None] = None,
+    ):
+        SequentialSolver.__init__(self,cfg,domains,custom_update_operation)
+  
+
+    
+    @property
+    def network_dir(self):
+        dir_name ="/home/jovyan/final/outputs/fhn2eqv2/"+ self.domain.name
+        if self.domains[self.domain_index][0] > 1:
+            dir_name += "_" + str(self.iteration_index).zfill(4)
+        return dir_name
+
+    def setnetwork_dir(self,dir):
+        self.network_dir=dir
+    def eval(
+        self,
+    ):
+        # check the directory exists
+
+
+        # create global model for restoring and saving
+
+    
+        #print(self.domains)
+        for domain_index in range(0, len(self.domains)):
+                # solve for number of iterations in train_domain
+            for iteration_index in range(0, self.domains[domain_index][0]   ):
+
+                    # set internal domain index and iteration index
+                    self.domain_index = domain_index
+                    self.iteration_index=iteration_index 
+                    self.log.info(
+                        "Predicting for Domain "
+                        + str(self.domain.name)
+                        + ", iteration "
+                        + str(self.iteration_index)
+                    )
+                    
+                    if not os.path.exists(self.network_dir):
+                        print(os.getcwd()+self.network_dir)
+                        raise RuntimeError("Network checkpoint is required for eval mode.")
+                    self.saveable_models = self.get_saveable_models()
+
+        # set device
+                    if self.device is None:
+                        self.device = self.manager.device
+
+        # load model
+                    self.step = self.load_step()
+                    self.step = self.load_model()
+                    self.step_str = f"[step: {self.step:10d}]"
+
+                    # make summary writer
+                    self.writer = SummaryWriter(
+                        log_dir=self.network_dir, purge_step=self.summary_freq + 1
+                    )
+                    self.summary_histograms = self.cfg["summary_histograms"]
+
+                    if self.manager.cuda:
+                        torch.cuda.synchronize(self.device)
+
+                    # write inference / validation datasets to tensorboard and file
+                    if self.has_validators:
+                        self._record_validators(self.step)
+                    if self.has_inferencers:
+                        self._record_inferencers(self.step)
+                    if self.has_monitors:
+                        self._record_monitors(self.step)
+
 t_max = 10.0
 n_w=10
 t_w= t_max/n_w
 
-
-
-
-
-def generateExactSolution(t,dt,x0,w0,rate,P,begin,end):
-    
-    
-    n2=int(t/(dt))+2
-    n = int((end-begin)/(dt*rate))
-    Sol=np.zeros((n,3))
-  
-    Sol2=np.zeros((n2,2))
-    Sol2[0]=0.6,0
-    T=0
-    k=0
-    while(k<n2-1):
-        x,w=Sol2[k]
-        Sol2[k+1]=10*(x*(x-0.4)*(1-x)-w)*dt+  x, 0.5*(x*0.2-0.8*w)*dt +w
- 
-        if ((k*dt==begin or ((k+1)%rate == 0 and k*dt>=begin and k*dt<=end))and T<n):
-          
-           
-            Sol[T] = Sol2[k][0],Sol2[k][1] , k*dt
-            T=T+1
-        
-        k=k+1
-        if(k*dt > end):
-            break
-    return Sol
-
 def generateValidator(w_i,nodes):
 
     
-    
-    T=np.empty([0])
-    K=np.empty([0])
-    SOLs=np.empty([0])
-    SOLw=np.empty([0])
-    V=np.empty([0])
-    krange= [(0 + 0.05*i*1) for i in range(0,20)]
-    vrange= [(0 + 0.05*i*1) for i in range(0,20)]
-
-    deltaT = 0.01
-    
-    rate=5
-    for KR in krange:
-        for VR in vrange:
-            begin=w_i* t_w
-            end=begin + t_w
-            sol=generateExactSolution(t_max,deltaT,KR,VR,rate,KR,begin,end)
-
-            T=sol.T[2] - begin
-            SOLs=sol.T[0]
-            SOLw=sol.T[1]
-    
-    
-    t = np.expand_dims(T, axis=-1)
-
-
-    k = np.expand_dims(K, axis=-1)
-
-    
-    Solx = np.expand_dims(SOLs, axis=-1)
-
-    
-    Solw = np.expand_dims(SOLw, axis=-1)
    
-    v= np.expand_dims(V,axis=-1)
-    print(t,"val set de ",begin,"a ", end)
-
-    
-    invar_numpy = {"t": t}
-    outvar_numpy = {
-        "x1": Solx,
-        "w":Solw
-    }
+    ASD=np.linspace(0,1,1000)
+    ASD=np.expand_dims(ASD,axis=-1)
+    print(np.shape(ASD))
+    invar_numpy = {"t": ASD}
+    outvar = {"x1","w"}
    
-    validator = PointwiseValidator(
-        nodes=nodes, invar=invar_numpy, true_outvar=outvar_numpy, batch_size=100,plotter=None
+    validator = PointwiseInferencer(
+        nodes=nodes, invar=invar_numpy,
+        output_names=outvar, batch_size=100,plotter=None
     )
     return validator
 
@@ -154,29 +199,9 @@ class SpringMass(PDE):
 @modulus.main(config_path="conf", config_name="config")
 def run(cfg: ModulusConfig) -> None:
     
-    # make list of nodes to unroll graph on
     sm = SpringMass()
     sm.pprint()
-    #sm_net = FullyConnectedArch(
-    #    input_keys=[Key("t"), Key("K")],
-    #    output_keys=[Key("x1")],
-    #)
-    #nodes = sm.make_nodes() + [
-    #    sm_net.make_node(name="network")
-    #]
 
-
-    
-    # make list of nodes to unroll graph on
-    sm = SpringMass()
-    sm.pprint()
-    #sm_net = FullyConnectedArch(
-    #    input_keys=[Key("t"), Key("K")],
-    #    output_keys=[Key("x1")],
-    #)
-    #nodes = sm.make_nodes() + [
-    #    sm_net.make_node(name="network")
-    #]
 
     
     
@@ -212,9 +237,8 @@ def run(cfg: ModulusConfig) -> None:
 
     # make domain
         # make initial condition domain
-    ic_domain = Domain("initial_conditions")
+    ic_domain =  Domain("initial_conditions")
 
-  
     IC = PointwiseBoundaryConstraint(
         nodes=nodes,
         geometry=geo,
@@ -228,7 +252,7 @@ def run(cfg: ModulusConfig) -> None:
         
         quasirandom=True,
     )
-    ic_domain.add_constraint(IC, name="IC")
+    #ic_domain.add_constraint(IC, name="IC")
     
     interior = PointwiseBoundaryConstraint(
         nodes=nodes,
@@ -244,7 +268,7 @@ def run(cfg: ModulusConfig) -> None:
         quasirandom=True,
 
     )
-    ic_domain.add_constraint(interior, name="interior")
+    #ic_domain.add_constraint(interior, name="interior")
     
     
        
@@ -301,6 +325,7 @@ def run(cfg: ModulusConfig) -> None:
  
     
     
+    
 
     
     dom=[]
@@ -316,21 +341,22 @@ def run(cfg: ModulusConfig) -> None:
     for a,d in dom:
         print(d)
         print(d.name)
-        d.add_validator(generateValidator(i,nodes))
+        d.add_inferencer(generateValidator(i,nodes))
 
         
         i=i+1
     
       
-    slv = SequentialSolver(
+    slv = SSolver(
         cfg,
         dom,
         custom_update_operation=time_window_net.move_window,
 
     )
 
-    # start solver
-    slv.solve()
+
+
+    slv.eval()
 
         
         
