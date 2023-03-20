@@ -96,7 +96,7 @@ class SSolver(SequentialSolver):
     
     @property
     def network_dir(self):
-        dir_name ="/home/jovyan/final/outputs/fhn2eqv2/"+ self.domain.name
+        dir_name ="/home/jovyan/final/outputs/fhn0P/"+ self.domain.name
         if self.domains[self.domain_index][0] > 1:
             dir_name += "_" + str(self.iteration_index).zfill(4)
         return dir_name
@@ -252,7 +252,7 @@ def run(cfg: ModulusConfig) -> None:
         
         quasirandom=True,
     )
-    #ic_domain.add_constraint(IC, name="IC")
+    ic_domain.add_constraint(IC, name="IC")
     
     interior = PointwiseBoundaryConstraint(
         nodes=nodes,
@@ -268,7 +268,7 @@ def run(cfg: ModulusConfig) -> None:
         quasirandom=True,
 
     )
-    #ic_domain.add_constraint(interior, name="interior")
+    ic_domain.add_constraint(interior, name="interior")
     
     
        
@@ -292,10 +292,7 @@ def run(cfg: ModulusConfig) -> None:
             "ode_w": 1 #+ 1000*x_symbol.diff(t_symbol)*x_symbol.diff(t_symbol)
         },
         quasirandom=True,
-        )
-
-
-        
+        )      
         
         IC = PointwiseBoundaryConstraint(
         nodes=nodes,
@@ -312,7 +309,6 @@ def run(cfg: ModulusConfig) -> None:
         
     )
         
-    
         
         window_domain.add_constraint(IC, name="IC")
         window_domain.add_constraint(interior1, "interior")
@@ -320,10 +316,7 @@ def run(cfg: ModulusConfig) -> None:
 
         domains.append(window_domain)
     
-
-    
- 
-    
+  
     
     
 
